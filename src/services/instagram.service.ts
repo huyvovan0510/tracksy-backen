@@ -147,8 +147,8 @@ export async function fetchProfile(username: string, _retried = false): Promise<
       ])
     } else {
       const [chainingRes, sharedRes] = await Promise.all([
-        ig.discover.chaining(userId).catch(() => null),
-        ig.user.sharedFollowerAccounts(userId).catch(() => null),
+        ig.discover.chaining(String(userId)).catch(() => null),
+        ig.user.sharedFollowerAccounts(String(userId)).catch(() => null),
       ])
       const chained = chainingRes?.users ?? []
       const shared = sharedRes?.accounts ?? sharedRes?.users ?? []

@@ -25,6 +25,8 @@ export interface ProfileSnapshot {
   profile_pic_url: string | null
   bio: string | null
   full_name: string | null
+  is_private: boolean
+  is_verified: boolean
   scanned_at: string
 }
 
@@ -33,8 +35,11 @@ export interface ProfileChange {
   instagram_username: string
   followers_before: number
   followers_after: number
+  followers_diff: number
   following_before: number
   following_after: number
+  following_diff: number
+  notification_sent: boolean
   detected_at: string
 }
 
