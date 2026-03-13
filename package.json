@@ -17,8 +17,7 @@
     "dotenv": "^16.3.1",
     "fastify": "^4.25.2",
     "gender-detection": "^0.1.0",
-    "instagram-private-api": "^1.45.3",
-    "ioredis": "^5.3.2"
+    "instagram-private-api": "^1.45.3"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

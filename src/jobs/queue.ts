@@ -1,22 +1,23 @@
-import { Queue, Worker, QueueEvents } from 'bullmq'
-import IORedis from 'ioredis'
+import { Queue, Worker } from 'bullmq'
 import { config } from '../config'
 import { processScanJob, ScanJobData } from './scan.job'
 import { TrackedProfile } from '../types'
 
 // ─── Redis connection ──────────────────────────────────────
-const connection = new IORedis(config.redis.url, {
+// Pass URL directly to BullMQ — avoids ioredis version conflict
+const connection = {
+  url: config.redis.url,
   maxRetriesPerRequest: null, // required by BullMQ
   tls: config.redis.url.startsWith('rediss') ? {} : undefined,
-})
+}
 
 // ─── Queue ────────────────────────────────────────────────
 export const scanQueue = new Queue<ScanJobData>('profile-scans', {
   connection,
   defaultJobOptions: {
-    attempts: 3,                          // retry up to 3 times on failure
-    backoff: { type: 'exponential', delay: 5000 }, // wait longer between retries
-    removeOnComplete: 100,                // keep last 100 completed jobs for debugging
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 5000 },
+    removeOnComplete: 100,
     removeOnFail: 200,
   },
 })
@@ -28,10 +29,10 @@ export function startWorker() {
     processScanJob,
     {
       connection,
-      concurrency: 1,       // one scan at a time
+      concurrency: 1,
       limiter: {
         max: 1,
-        duration: 3000,     // 1 job per 3 seconds max
+        duration: 3000,
       },
     }
   )
