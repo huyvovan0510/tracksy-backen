@@ -10,11 +10,19 @@ export const config = {
     url: process.env.REDIS_URL!,
   },
   instagram: {
-    accounts: JSON.parse(process.env.IG_ACCOUNTS || '[]'),
+    accounts: (() => {
+      try {
+        return JSON.parse(process.env.IG_ACCOUNTS || '[]')
+      } catch {
+        console.error('[CONFIG] IG_ACCOUNTS is not valid JSON — no Instagram accounts loaded')
+        return []
+      }
+    })(),
   },
   server: {
     port: parseInt(process.env.PORT || '3000'),
     nodeEnv: process.env.NODE_ENV || 'development',
+    apiKey: process.env.API_KEY || '',
   },
   plans: {
     free: {

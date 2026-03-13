@@ -7,13 +7,16 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "worker": "tsx watch src/worker.ts"
+    "worker": "tsx watch src/worker.ts",
+    "postinstall": "sed -i 's/exports.APP_VERSION = .*/exports.APP_VERSION = \"289.0.0.77.109\";/' node_modules/instagram-private-api/dist/core/constants.js && sed -i 's/exports.APP_VERSION_CODE = .*/exports.APP_VERSION_CODE = \"456321091\";/' node_modules/instagram-private-api/dist/core/constants.js"
   },
   "dependencies": {
+    "@fastify/rate-limit": "^9.1.0",
     "@supabase/supabase-js": "^2.39.0",
     "bullmq": "^5.1.1",
     "dotenv": "^16.3.1",
     "fastify": "^4.25.2",
+    "gender-detection": "^0.1.0",
     "instagram-private-api": "^1.45.3",
     "ioredis": "^5.3.2"
   },
