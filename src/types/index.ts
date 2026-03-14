@@ -7,6 +7,14 @@ export interface User {
   created_at: string
 }
 
+export interface IgUser {
+  pk: string
+  username: string
+  fullName: string
+  profilePicUrl: string
+  gender: 'male' | 'female' | 'unknown'
+}
+
 export interface TrackedProfile {
   id: string
   user_id: string
@@ -27,6 +35,8 @@ export interface ProfileSnapshot {
   full_name: string | null
   is_private: boolean
   is_verified: boolean
+  followers_list: IgUser[]
+  following_list: IgUser[]
   scanned_at: string
 }
 
@@ -39,6 +49,8 @@ export interface ProfileChange {
   following_before: number
   following_after: number
   following_diff: number
+  new_followers: IgUser[]
+  new_following: IgUser[]
   notification_sent: boolean
   detected_at: string
 }

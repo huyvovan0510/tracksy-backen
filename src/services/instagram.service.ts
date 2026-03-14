@@ -1,10 +1,9 @@
 import { IgApiClient } from 'instagram-private-api'
 import { config } from '../config'
 import { IgAccount } from '../types'
+import { detectGenderBatch } from './gender.service'
 import fs from 'fs'
 import path from 'path'
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const genderDetection = require('gender-detection')
 
 interface IgUser {
   pk: string
@@ -114,15 +113,18 @@ function randomDelay(minMs = 2000, maxMs = 5000): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-function mapUser(u: any): IgUser {
-  const firstName = (u.full_name ?? '').split(' ')[0]
+function mapUser(u: any): Omit<IgUser, 'gender'> {
   return {
     pk: String(u.pk),
     username: u.username,
     fullName: u.full_name ?? '',
     profilePicUrl: u.profile_pic_url ?? '',
-    gender: genderDetection.detect(firstName),
   }
+}
+
+async function assignGenders(users: Omit<IgUser, 'gender'>[]): Promise<IgUser[]> {
+  const genders = await detectGenderBatch(users.map(u => u.fullName))
+  return users.map((u, i) => ({ ...u, gender: genders[i] }))
 }
 
 // ─── Main fetch function ───────────────────────────────────
@@ -158,6 +160,17 @@ export async function fetchProfile(username: string, _retried = false): Promise<
     // Re-save after each use — rotated cookies stay fresh
     saveSession(account.username, await ig.state.serialize())
 
+    // Batch gender detection for all users via genderize.io
+    const allRaw = [
+      ...followers.map(mapUser),
+      ...following.map(mapUser),
+      ...relatedAccounts.map(mapUser),
+    ]
+    const allWithGender = await assignGenders(allRaw)
+
+    const fCount = followers.length
+    const foCount = following.length
+
     return {
       igUserId: String(userId),
       username: user.username,
@@ -168,9 +181,9 @@ export async function fetchProfile(username: string, _retried = false): Promise<
       followingCount: user.following_count ?? 0,
       isPrivate: user.is_private ?? false,
       isVerified: user.is_verified ?? false,
-      followers: followers.map(mapUser),
-      following: following.map(mapUser),
-      relatedAccounts: relatedAccounts.map(mapUser),
+      followers: allWithGender.slice(0, fCount),
+      following: allWithGender.slice(fCount, fCount + foCount),
+      relatedAccounts: allWithGender.slice(fCount + foCount),
     }
   } catch (err: any) {
     // Session expired — retry once with fresh login (no infinite recursion)

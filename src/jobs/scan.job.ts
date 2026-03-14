@@ -9,12 +9,99 @@ import {
   getUserById,
 } from '../supabase/db'
 import { config } from '../config'
-import { TrackedProfile } from '../types'
+import { TrackedProfile, IgUser } from '../types'
 
 export interface ScanJobData {
   trackedProfile: TrackedProfile
   userId: string
 }
+
+// ─── Diff helpers ──────────────────────────────────────────
+
+function diffUsers(current: IgUser[], previous: IgUser[]): IgUser[] {
+  const prevPks = new Set(previous.map(u => u.pk))
+  return current.filter(u => !prevPks.has(u.pk))
+}
+
+// ─── Notification builders ─────────────────────────────────
+
+function buildFollowerNotification(
+  username: string,
+  newFollowers: IgUser[],
+  isPrivate: boolean,
+  followersDiff: number
+): { title: string; body: string } {
+  // Private account — no user info available
+  if (isPrivate || newFollowers.length === 0) {
+    if (followersDiff > 0) {
+      return {
+        title: `@${username} has new followers`,
+        body: `Someone just followed @${username}`,
+      }
+    }
+    if (followersDiff < 0) {
+      return {
+        title: `@${username} lost followers`,
+        body: `Someone unfollowed @${username}`,
+      }
+    }
+    return {
+      title: `@${username} stats changed`,
+      body: `Follower count updated for @${username}`,
+    }
+  }
+
+  // Public account — show specific user info
+  const first = newFollowers[0]
+  const name = first.fullName?.trim() || `@${first.username}`
+
+  if (newFollowers.length === 1) {
+    return {
+      title: `New follower on @${username}`,
+      body: `${name} just followed @${username}`,
+    }
+  }
+
+  const others = newFollowers.length - 1
+  return {
+    title: `New followers on @${username}`,
+    body: `${name} and ${others} other${others > 1 ? 's' : ''} just followed @${username}`,
+  }
+}
+
+function buildFollowingNotification(
+  username: string,
+  newFollowing: IgUser[],
+  isPrivate: boolean,
+  followingDiff: number
+): { title: string; body: string } | null {
+  // Only notify for following changes if we have specific users (public accounts)
+  if (isPrivate || newFollowing.length === 0) {
+    if (followingDiff === 0) return null
+    return {
+      title: `@${username} followed someone`,
+      body: `@${username} just followed someone new`,
+    }
+  }
+
+  const first = newFollowing[0]
+  const name = first.fullName?.trim() || `@${first.username}`
+
+  if (newFollowing.length === 1) {
+    return {
+      title: `@${username} is following someone new`,
+      body: `@${username} just followed ${name}`,
+    }
+  }
+
+  const others = newFollowing.length - 1
+  return {
+    title: `@${username} is following new people`,
+    body: `@${username} just followed ${name} and ${others} other${others > 1 ? 's' : ''}`,
+  }
+}
+
+// ─── Main job processor ────────────────────────────────────
 
 export async function processScanJob(job: Job<ScanJobData>) {
   const { trackedProfile, userId } = job.data
@@ -28,7 +115,7 @@ export async function processScanJob(job: Job<ScanJobData>) {
   // ── 2. Get last snapshot to compare ─────────────────────
   const lastSnapshot = await getLatestSnapshot(profileId)
 
-  // ── 3. Save new snapshot ─────────────────────────────────
+  // ── 3. Save new snapshot (with user lists) ───────────────
   await saveSnapshot({
     tracked_profile_id: profileId,
     instagram_username: username,
@@ -39,16 +126,33 @@ export async function processScanJob(job: Job<ScanJobData>) {
     full_name: fresh.fullName,
     is_private: fresh.isPrivate,
     is_verified: fresh.isVerified,
+    followers_list: fresh.followers,
+    following_list: fresh.following,
   })
 
   // ── 4. Compare with last snapshot ────────────────────────
   if (lastSnapshot) {
     const followersDiff = fresh.followersCount - lastSnapshot.followers_count
     const followingDiff = fresh.followingCount - lastSnapshot.following_count
-    const hasChanged = followersDiff !== 0 || followingDiff !== 0
+
+    // Diff user lists (public accounts only — private returns empty arrays)
+    const newFollowers = diffUsers(fresh.followers, lastSnapshot.followers_list ?? [])
+    const newFollowing = diffUsers(fresh.following, lastSnapshot.following_list ?? [])
+
+    const hasChanged =
+      followersDiff !== 0 ||
+      followingDiff !== 0 ||
+      newFollowers.length > 0 ||
+      newFollowing.length > 0
 
     if (hasChanged) {
-      console.log(`[SCAN] Change detected for @${username}: followers ${lastSnapshot.followers_count} → ${fresh.followersCount}`)
+      console.log(
+        `[SCAN] Change detected for @${username}: ` +
+        `followers ${lastSnapshot.followers_count} → ${fresh.followersCount} ` +
+        `(${newFollowers.length} new users identified), ` +
+        `following ${lastSnapshot.following_count} → ${fresh.followingCount} ` +
+        `(${newFollowing.length} new users identified)`
+      )
 
       // ── 5. Save change record ──────────────────────────
       await saveChange({
@@ -60,19 +164,45 @@ export async function processScanJob(job: Job<ScanJobData>) {
         following_before: lastSnapshot.following_count,
         following_after: fresh.followingCount,
         following_diff: followingDiff,
+        new_followers: newFollowers,
+        new_following: newFollowing,
         notification_sent: false,
       })
 
-      // ── 6. Send push notification to user ─────────────
+      // ── 6. Send push notification ──────────────────────
       const user = await getUserById(userId)
       if (user?.fcm_token) {
-        const title = buildNotificationTitle(username, followersDiff)
-        const body = buildNotificationBody(fresh.followersCount, followersDiff)
-        await sendPushNotification(user.fcm_token, title, body, {
-          type: 'follower_change',
-          username,
-          profileId,
-        })
+        // Follower change notification (always send if followers changed)
+        if (followersDiff !== 0 || newFollowers.length > 0) {
+          const { title, body } = buildFollowerNotification(
+            username,
+            newFollowers,
+            fresh.isPrivate,
+            followersDiff
+          )
+          await sendPushNotification(user.fcm_token, title, body, {
+            type: 'follower_change',
+            username,
+            profileId,
+          })
+        }
+
+        // Following change notification
+        if (followingDiff !== 0 || newFollowing.length > 0) {
+          const notification = buildFollowingNotification(
+            username,
+            newFollowing,
+            fresh.isPrivate,
+            followingDiff
+          )
+          if (notification) {
+            await sendPushNotification(user.fcm_token, notification.title, notification.body, {
+              type: 'following_change',
+              username,
+              profileId,
+            })
+          }
+        }
       }
     } else {
       console.log(`[SCAN] No change for @${username}`)
@@ -85,26 +215,11 @@ export async function processScanJob(job: Job<ScanJobData>) {
   const nextScanAt = new Date()
   nextScanAt.setHours(nextScanAt.getHours() + config.plans.pro.scanIntervalHours)
 
-  // add random offset (0–30 min) to avoid all scans firing at same time
+  // Random offset (0–30 min) to avoid thundering herd
   const randomOffsetMs = Math.floor(Math.random() * 30 * 60 * 1000)
   nextScanAt.setTime(nextScanAt.getTime() + randomOffsetMs)
 
   await updateAfterScan(profileId, fresh.igUserId, nextScanAt)
 
   console.log(`[SCAN] Done @${username} — next scan at ${nextScanAt.toISOString()}`)
-}
-
-// ─── Notification message builders ────────────────────────
-
-function buildNotificationTitle(username: string, followersDiff: number): string {
-  if (followersDiff > 0) return `@${username} gained followers`
-  if (followersDiff < 0) return `@${username} lost followers`
-  return `@${username} stats changed`
-}
-
-function buildNotificationBody(currentFollowers: number, diff: number): string {
-  const formatted = currentFollowers.toLocaleString()
-  if (diff > 0) return `+${diff} followers — now at ${formatted}`
-  if (diff < 0) return `${diff} followers — now at ${formatted}`
-  return `Now at ${formatted} followers`
 }

@@ -132,7 +132,11 @@ export async function updateAfterScan(
 export async function saveSnapshot(snapshot: Omit<ProfileSnapshot, 'id' | 'scanned_at'>) {
   const { error } = await supabase
     .from('profile_snapshots')
-    .insert(snapshot)
+    .insert({
+      ...snapshot,
+      followers_list: snapshot.followers_list ?? [],
+      following_list: snapshot.following_list ?? [],
+    })
 
   if (error) throw error
 }
@@ -170,7 +174,12 @@ export async function getSnapshotHistory(
 export async function saveChange(change: Omit<ProfileChange, 'id' | 'detected_at'>) {
   const { error } = await supabase
     .from('profile_changes')
-    .insert({ ...change, notification_sent: false })
+    .insert({
+      ...change,
+      new_followers: change.new_followers ?? [],
+      new_following: change.new_following ?? [],
+      notification_sent: false,
+    })
 
   if (error) throw error
 }
