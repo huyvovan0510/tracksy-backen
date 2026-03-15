@@ -53,12 +53,26 @@ function loadSession(username: string): object | null {
 // ─── Account Pool ──────────────────────────────────────────
 let currentAccountIndex = 0
 const accounts: IgAccount[] = config.instagram.accounts
+const challengedAccounts = new Set<string>()
 
 function getNextAccount(): IgAccount {
   if (accounts.length === 0) throw new Error('No Instagram accounts configured')
-  const account = accounts[currentAccountIndex]
-  currentAccountIndex = (currentAccountIndex + 1) % accounts.length
+  const available = accounts.filter(a => !challengedAccounts.has(a.username))
+  if (available.length === 0) throw new Error('All Instagram accounts are checkpoint-challenged. Manual resolution required.')
+  const account = available[currentAccountIndex % available.length]
+  currentAccountIndex = (currentAccountIndex + 1) % available.length
   return account
+}
+
+function markAccountChallenged(username: string) {
+  challengedAccounts.add(username)
+  sessionCache.delete(username)
+  fs.rmSync(sessionPath(username), { force: true })
+  if (keepAliveTimers.has(username)) {
+    clearInterval(keepAliveTimers.get(username)!)
+    keepAliveTimers.delete(username)
+  }
+  console.error(`[IG] @${username} is checkpoint-challenged and has been removed from rotation. Fix manually then restart.`)
 }
 
 // ─── Session Cache ─────────────────────────────────────────
@@ -94,11 +108,15 @@ async function getAuthenticatedClient(account: IgAccount): Promise<IgApiClient> 
         await ig.account.currentUser()
         saveSession(account.username, await ig.state.serialize())
         console.log(`[IG] Session refreshed for @${account.username}`)
-      } catch {
-        sessionCache.delete(account.username)
-        fs.rmSync(sessionPath(account.username), { force: true })
-        keepAliveTimers.delete(account.username)
-        console.warn(`[IG] Idle session expired for @${account.username}, will re-login on next request`)
+      } catch (e: any) {
+        if (e?.name === 'IgCheckpointError') {
+          markAccountChallenged(account.username)
+        } else {
+          sessionCache.delete(account.username)
+          fs.rmSync(sessionPath(account.username), { force: true })
+          keepAliveTimers.delete(account.username)
+          console.warn(`[IG] Idle session expired for @${account.username}, will re-login on next request`)
+        }
       }
     }, 24 * 60 * 60 * 1000)
     keepAliveTimers.set(account.username, timer)
@@ -191,6 +209,11 @@ export async function fetchProfile(username: string, _retried = false): Promise<
       console.warn(`[IG] Session expired for @${account.username}, re-authenticating...`)
       sessionCache.delete(account.username)
       fs.rmSync(sessionPath(account.username), { force: true })
+      return fetchProfile(username, true)
+    }
+    // Checkpoint (security challenge) — pull this account from rotation, try next
+    if (err?.name === 'IgCheckpointError' && !_retried) {
+      markAccountChallenged(account.username)
       return fetchProfile(username, true)
     }
     throw err
