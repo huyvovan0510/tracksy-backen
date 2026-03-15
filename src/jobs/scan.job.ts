@@ -115,7 +115,21 @@ export async function processScanJob(job: Job<ScanJobData>) {
   // ── 2. Get last snapshot to compare ─────────────────────
   const lastSnapshot = await getLatestSnapshot(profileId)
 
-  // ── 3. Save new snapshot (with user lists) ───────────────
+  // ── 3. Diff first, then enrich lists with isNew ──────────
+  const newFollowers = lastSnapshot
+    ? diffUsers(fresh.followers, lastSnapshot.followers_list ?? [])
+    : []
+  const newFollowing = lastSnapshot
+    ? diffUsers(fresh.following, lastSnapshot.following_list ?? [])
+    : []
+
+  const newFollowerPks = new Set(newFollowers.map(u => u.pk))
+  const newFollowingPks = new Set(newFollowing.map(u => u.pk))
+
+  const enrichedFollowers = fresh.followers.map(u => ({ ...u, isNew: newFollowerPks.has(u.pk) }))
+  const enrichedFollowing = fresh.following.map(u => ({ ...u, isNew: newFollowingPks.has(u.pk) }))
+
+  // ── 4. Save new snapshot (with isNew flags) ───────────────
   await saveSnapshot({
     tracked_profile_id: profileId,
     instagram_username: username,
@@ -126,18 +140,14 @@ export async function processScanJob(job: Job<ScanJobData>) {
     full_name: fresh.fullName,
     is_private: fresh.isPrivate,
     is_verified: fresh.isVerified,
-    followers_list: fresh.followers,
-    following_list: fresh.following,
+    followers_list: enrichedFollowers,
+    following_list: enrichedFollowing,
   })
 
-  // ── 4. Compare with last snapshot ────────────────────────
+  // ── 5. Compare with last snapshot ────────────────────────
   if (lastSnapshot) {
     const followersDiff = fresh.followersCount - lastSnapshot.followers_count
     const followingDiff = fresh.followingCount - lastSnapshot.following_count
-
-    // Diff user lists (public accounts only — private returns empty arrays)
-    const newFollowers = diffUsers(fresh.followers, lastSnapshot.followers_list ?? [])
-    const newFollowing = diffUsers(fresh.following, lastSnapshot.following_list ?? [])
 
     const hasChanged =
       followersDiff !== 0 ||
@@ -154,7 +164,7 @@ export async function processScanJob(job: Job<ScanJobData>) {
         `(${newFollowing.length} new users identified)`
       )
 
-      // ── 5. Save change record ──────────────────────────
+      // ── 6. Save change record ──────────────────────────
       await saveChange({
         tracked_profile_id: profileId,
         instagram_username: username,

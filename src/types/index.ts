@@ -13,6 +13,7 @@ export interface IgUser {
   fullName: string
   profilePicUrl: string
   gender: 'male' | 'female' | 'unknown'
+  isNew?: boolean
 }
 
 export interface TrackedProfile {
